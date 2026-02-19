@@ -12,12 +12,14 @@ public class AuthController : ControllerBase
 {
     private readonly TaskDbContext _context;
     private readonly IJwtService _jwtService;
+    private readonly ITelemetryService _telemetryService;
     private readonly ILogger<AuthController> _logger;
 
-    public AuthController(TaskDbContext context, IJwtService jwtService, ILogger<AuthController> logger)
+    public AuthController(TaskDbContext context, IJwtService jwtService, ITelemetryService telemetryService, ILogger<AuthController> logger)
     {
         _context = context;
         _jwtService = jwtService;
+        _telemetryService = telemetryService;
         _logger = logger;
     }
 
@@ -43,6 +45,10 @@ public class AuthController : ControllerBase
         if (user == null)
         {
             _logger.LogWarning("Login attempt with invalid username: {Username}", loginDto.Username);
+            
+            // Track failed login attempt
+            _telemetryService.TrackUserLogin(loginDto.Username, "Unknown", false);
+            
             return Unauthorized(new { message = "Invalid username or password" });
         }
 
@@ -50,6 +56,10 @@ public class AuthController : ControllerBase
         if (!BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
         {
             _logger.LogWarning("Failed login attempt for user: {Username}", loginDto.Username);
+            
+            // Track failed login attempt
+            _telemetryService.TrackUserLogin(user.Username, user.Role, false);
+            
             return Unauthorized(new { message = "Invalid username or password" });
         }
 
@@ -57,6 +67,9 @@ public class AuthController : ControllerBase
         var token = _jwtService.GenerateToken(user);
         var expiration = DateTime.UtcNow.AddMinutes(60);
 
+        // Track successful login
+        _telemetryService.TrackUserLogin(user.Username, user.Role, true);
+        
         _logger.LogInformation("Successful login for user: {Username}", user.Username);
 
         return Ok(new LoginResponseDto

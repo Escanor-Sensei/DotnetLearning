@@ -12,11 +12,13 @@ namespace TaskManagementAPI.Controllers;
 public class TasksController : ControllerBase
 {
     private readonly ITaskService _taskService;
+    private readonly ITelemetryService _telemetryService;
     private readonly ILogger<TasksController> _logger;
 
-    public TasksController(ITaskService taskService, ILogger<TasksController> logger)
+    public TasksController(ITaskService taskService, ITelemetryService telemetryService, ILogger<TasksController> logger)
     {
         _taskService = taskService;
+        _telemetryService = telemetryService;
         _logger = logger;
     }
 
@@ -74,6 +76,14 @@ public class TasksController : ControllerBase
 
         var createdTask = await _taskService.CreateTaskAsync(createTaskDto);
         
+        // Track telemetry for task creation
+        var userId = User?.Identity?.Name;
+        _telemetryService.TrackTaskCreated(
+            createdTask.Id, 
+            createdTask.Priority.ToString(), 
+            createdTask.DueDate.HasValue, 
+            userId);
+        
         _logger.LogInformation("Task created with ID: {TaskId}", createdTask.Id);
         return CreatedAtAction(nameof(GetTask), new { id = createdTask.Id }, createdTask);
     }
@@ -128,6 +138,10 @@ public class TasksController : ControllerBase
             _logger.LogWarning("Task with ID {TaskId} not found for deletion", id);
             return NotFound($"Task with ID {id} not found");
         }
+
+        // Track telemetry for task deletion
+        var userId = User?.Identity?.Name;
+        _telemetryService.TrackTaskDeleted(id, userId);
 
         _logger.LogInformation("Task with ID {TaskId} deleted successfully", id);
         return NoContent();

@@ -19,6 +19,18 @@ builder.Services.AddDbContext<TaskDbContext>(options =>
 // Register services
 builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.AddScoped<ITelemetryService, TelemetryService>();
+
+// Add Application Insights Telemetry
+builder.Services.AddApplicationInsightsTelemetry(options =>
+{
+    // Use connection string from configuration
+    options.ConnectionString = builder.Configuration.GetConnectionString("ApplicationInsights");
+    // Enable adaptive sampling for production
+    options.EnableAdaptiveSampling = !builder.Environment.IsDevelopment();
+    // Enable live metrics for real-time monitoring
+    options.EnableQuickPulseMetricStream = true;
+});
 
 // Configure JWT Authentication
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
