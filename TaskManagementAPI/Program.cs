@@ -1,4 +1,6 @@
 using System.Text;
+using FluentValidation;
+using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -20,6 +22,11 @@ builder.Services.AddDbContext<TaskDbContext>(options =>
 builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<ITelemetryService, TelemetryService>();
+
+// Register FluentValidation
+builder.Services.AddFluentValidationAutoValidation()
+                .AddFluentValidationClientsideAdapters()
+                .AddValidatorsFromAssemblyContaining<Program>();
 
 // Add Application Insights Telemetry
 builder.Services.AddApplicationInsightsTelemetry(options =>
