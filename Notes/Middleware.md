@@ -1,342 +1,232 @@
-# .NET Middleware - Creation & Testing Guide
+# .NET Middleware
 
-## 🔧 **What is Middleware?**
+## What is Middleware?
 
-Middleware is software that acts as a bridge between different applications or components in a system. In ASP.NET Core, middleware components form a **request pipeline** that handles HTTP requests and responses.
+Middleware is software assembled into an application pipeline to handle requests and responses. Each component in the pipeline:
+- **Chooses** whether to pass the request to the next component
+- **Can perform work** before and after the next component executes
 
-## 🏗️ **Middleware Pipeline Architecture**
+In ASP.NET Core, middleware forms the backbone of the HTTP request processing pipeline. Every request passes through a chain of middleware components, and each can inspect, modify, short-circuit, or pass along the request.
+
+## The Request Pipeline
+
+### How It Works
 
 ```
-Request → [Middleware 1] → [Middleware 2] → [Middleware 3] → Controller
-Response ← [Middleware 1] ← [Middleware 2] ← [Middleware 3] ← Controller
+Request  →  [M1: before]  →  [M2: before]  →  [M3: before]  →  Endpoint
+Response ←  [M1: after]   ←  [M2: after]   ←  [M3: after]   ←  Endpoint
 ```
 
-### **Key Characteristics**
-- **Sequential Processing**: Each middleware can process the request before passing it to the next
-- **Bidirectional**: Can modify both incoming requests and outgoing responses
-- **Short-circuiting**: Middleware can terminate the pipeline early
-- **Order Matters**: The sequence of middleware registration affects execution
+Key characteristics:
+- **Bidirectional** — Each middleware runs code _before_ calling `next()` (request phase) and _after_ `next()` returns (response phase)
+- **Sequential** — Registration order determines execution order
+- **Short-circuiting** — A middleware can return a response without calling `next()`, terminating the pipeline early
+- **Composable** — Middleware components are independent and reusable
 
-## 📝 **Creating Custom Middleware**
+### The `next` Delegate
 
-### **Method 1: Inline Middleware**
-```csharp
-app.Use((context, next) =>
-{
-    // Before next middleware
-    Console.WriteLine($"Request: {context.Request.Path}");
-    
-    // Call next middleware
-    var task = next();
-    
-    // After next middleware (on response)
-    task.ContinueWith(_ => 
-    {
-        Console.WriteLine($"Response: {context.Response.StatusCode}");
-    });
-    
-    return task;
-});
+The `RequestDelegate next` parameter represents the next middleware in the pipeline. Calling `await next(context)` passes control to the next middleware. Not calling it short-circuits the pipeline.
+
+```
+If next() is called:    Request flows deeper into pipeline, then response flows back
+If next() is NOT called: Pipeline stops here, response is returned immediately
 ```
 
-### **Method 2: Custom Middleware Class**
-```csharp
-public class RequestLoggingMiddleware
-{
-    private readonly RequestDelegate _next;
-    private readonly ILogger<RequestLoggingMiddleware> _logger;
+## Creating Custom Middleware
 
-    public RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
+There are three approaches to creating middleware, each suited for different scenarios:
 
-    public async Task InvokeAsync(HttpContext context)
-    {
-        // Before processing request
-        _logger.LogInformation("Processing request: {Method} {Path}", 
-            context.Request.Method, context.Request.Path);
+### Approach 1: Inline Middleware (Lambda)
 
-        // Call next middleware
-        await _next(context);
+- Defined directly in `Program.cs` using `app.Use()` or `app.Run()`
+- Best for: Simple, one-off middleware logic
+- `app.Use()` can call `next()` to continue the pipeline
+- `app.Run()` is terminal — it never calls `next()`
 
-        // After processing request
-        _logger.LogInformation("Completed request: {StatusCode}", 
-            context.Response.StatusCode);
-    }
-}
-```
+### Approach 2: Convention-Based Middleware Class
 
-### **Method 3: Extension Method Approach**
-```csharp
-public static class MiddlewareExtensions
-{
-    public static IApplicationBuilder UseRequestLogging(this IApplicationBuilder builder)
-    {
-        return builder.UseMiddleware<RequestLoggingMiddleware>();
-    }
-}
+The most common approach. The class must have:
+- A constructor accepting `RequestDelegate next` (and any DI services with **singleton** lifetime)
+- A public method `InvokeAsync(HttpContext context)` or `Invoke(HttpContext context)`
+- Scoped/transient services are injected as parameters on `InvokeAsync`, not in the constructor
 
-// Usage in Program.cs
-app.UseRequestLogging();
-```
+**Why?** Middleware is instantiated once at startup (singleton lifetime). Injecting scoped services in the constructor would cause them to live for the entire application lifetime, leading to bugs.
 
-## 🎯 **Common Middleware Use Cases**
+### Approach 3: Factory-Based Middleware (IMiddleware)
 
-### **1. Request Timing Middleware**
-- Measures request processing time
-- Adds performance headers
-- Logs slow requests
+- Implement the `IMiddleware` interface
+- Registered in DI container, allowing any service lifetime (scoped, transient)
+- More testable due to explicit interface
+- Must be registered: `builder.Services.AddTransient<MyMiddleware>()`
 
-### **2. Error Handling Middleware** 
-- Catches unhandled exceptions
-- Returns consistent error responses
-- Logs error details
+### Extension Method Pattern
 
-### **3. Security Middleware**
-- Adds security headers
-- Request validation
-- Rate limiting
-
-### **4. Logging Middleware**
-- Request/response logging
-- Correlation ID tracking
-- Audit trails
-
-### **5. Response Modification Middleware**
-- Add custom headers
-- Response caching
-- Content transformation
-
-## 🧪 **Testing Middleware**
-
-### **Unit Testing Approach**
-```csharp
-[Test]
-public async Task RequestLoggingMiddleware_LogsRequestAndResponse()
-{
-    // Arrange
-    var logger = new Mock<ILogger<RequestLoggingMiddleware>>();
-    var context = new DefaultHttpContext();
-    context.Request.Method = "GET";
-    context.Request.Path = "/test";
-    
-    var middleware = new RequestLoggingMiddleware(
-        (ctx) => { ctx.Response.StatusCode = 200; return Task.CompletedTask; },
-        logger.Object
-    );
-
-    // Act
-    await middleware.InvokeAsync(context);
-
-    // Assert
-    Assert.AreEqual(200, context.Response.StatusCode);
-    // Verify logger was called with expected parameters
-}
-```
-
-### **Integration Testing**
-```csharp
-[Test]
-public async Task Api_WithCustomMiddleware_ReturnsExpectedHeaders()
-{
-    // Arrange
-    var client = _factory.CreateClient();
-
-    // Act
-    var response = await client.GetAsync("/api/tasks");
-
-    // Assert
-    Assert.IsTrue(response.Headers.Contains("X-Processing-Time"));
-    Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-}
-```
-
-## 🔧 **Practical Implementation Examples**
-
-### **Example 1: Performance Monitoring**
-```csharp
-public class PerformanceMiddleware
-{
-    private readonly RequestDelegate _next;
-    private readonly ILogger<PerformanceMiddleware> _logger;
-
-    public async Task InvokeAsync(HttpContext context)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        
-        try
-        {
-            await _next(context);
-        }
-        finally
-        {
-            stopwatch.Stop();
-            var elapsed = stopwatch.ElapsedMilliseconds;
-            
-            // Add header
-            context.Response.Headers.Add("X-Processing-Time", $"{elapsed}ms");
-            
-            // Log slow requests
-            if (elapsed > 1000)
-            {
-                _logger.LogWarning("Slow request detected: {Method} {Path} took {ElapsedMs}ms",
-                    context.Request.Method, context.Request.Path, elapsed);
-            }
-        }
-    }
-}
-```
-
-### **Example 2: Global Error Handling**
-```csharp
-public class GlobalExceptionMiddleware
-{
-    private readonly RequestDelegate _next;
-    private readonly ILogger<GlobalExceptionMiddleware> _logger;
-
-    public async Task InvokeAsync(HttpContext context)
-    {
-        try
-        {
-            await _next(context);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "An unhandled exception occurred");
-            await HandleExceptionAsync(context, ex);
-        }
-    }
-
-    private static async Task HandleExceptionAsync(HttpContext context, Exception exception)
-    {
-        context.Response.ContentType = "application/json";
-        
-        var response = exception switch
-        {
-            NotFoundException => new { error = "Resource not found", status = 404 },
-            ValidationException => new { error = "Validation failed", status = 400 },
-            UnauthorizedAccessException => new { error = "Unauthorized", status = 401 },
-            _ => new { error = "Internal server error", status = 500 }
-        };
-
-        context.Response.StatusCode = response.status;
-        await context.Response.WriteAsync(JsonSerializer.Serialize(response));
-    }
-}
-```
-
-### **Example 3: Request ID Middleware**
-```csharp
-public class RequestIdMiddleware
-{
-    private readonly RequestDelegate _next;
-    private const string RequestIdHeader = "X-Request-ID";
-
-    public async Task InvokeAsync(HttpContext context)
-    {
-        // Generate or get existing request ID
-        var requestId = context.Request.Headers[RequestIdHeader].FirstOrDefault() 
-                       ?? Guid.NewGuid().ToString();
-
-        // Add to context for logging
-        context.Items["RequestId"] = requestId;
-        
-        // Add to response headers
-        context.Response.Headers.Add(RequestIdHeader, requestId);
-
-        await _next(context);
-    }
-}
-```
-
-## 🎛️ **Middleware Registration Order**
-
-**Critical**: Order matters! Here's the recommended sequence:
+Best practice is to create an extension method for registering middleware:
 
 ```csharp
-// Program.cs - Correct order
-app.UseExceptionHandler();     // 1. Exception handling (first)
-app.UseHttpsRedirection();     // 2. HTTPS redirection
-app.UseRouting();              // 3. Routing
-app.UseAuthentication();       // 4. Authentication (who you are)
-app.UseAuthorization();        // 5. Authorization (what you can do)
-app.UseCustomMiddleware();     // 6. Custom middleware
-app.MapControllers();          // 7. Endpoint mapping (last)
+public static IApplicationBuilder UseMyMiddleware(this IApplicationBuilder builder)
+    => builder.UseMiddleware<MyMiddleware>();
 ```
 
-## ✅ **Testing Strategies**
+This keeps `Program.cs` clean and creates a consistent registration API.
 
-### **1. Unit Testing Individual Middleware**
-- Test middleware logic in isolation
-- Mock dependencies (logger, services)
-- Test different scenarios (success, failure, edge cases)
+## Middleware Registration Order
 
-### **2. Integration Testing**
-- Test middleware within the full pipeline
-- Verify middleware interaction
-- Test with real HTTP requests
+**Order is critical.** The sequence you register middleware in `Program.cs` determines execution order. The standard recommended order is:
 
-### **3. Performance Testing**
-- Measure middleware overhead
-- Test under load
-- Monitor memory usage
+| Order | Middleware | Purpose |
+|---|---|---|
+| 1 | Exception Handler | Catches all unhandled exceptions (must be first to catch everything) |
+| 2 | HSTS | Strict transport security header |
+| 3 | HTTPS Redirection | Redirects HTTP to HTTPS |
+| 4 | Static Files | Serves static files (short-circuits if file found) |
+| 5 | Routing | Determines which endpoint matches the request |
+| 6 | CORS | Cross-origin resource sharing |
+| 7 | Authentication | Establishes identity (who you are) |
+| 8 | Authorization | Checks permissions (what you can do) |
+| 9 | Custom Middleware | Your application-specific middleware |
+| 10 | Endpoint Mapping | Executes the matched endpoint (controller action) |
 
-## 📊 **Best Practices**
+### Why Order Matters — Examples
 
-### **DO's ✅**
-- Keep middleware lightweight and focused
-- Handle exceptions gracefully
-- Use dependency injection properly
-- Add comprehensive logging
-- Test thoroughly
-- Document middleware purpose
+- **Exception handling first**: If placed after authentication, auth failures won't get proper error formatting
+- **Authentication before authorization**: Authorization needs to know who the user is
+- **Routing before authorization**: Authorization policies often depend on the matched route/endpoint metadata
+- **CORS before auth**: Preflight OPTIONS requests need CORS headers before auth rejects them
 
-### **DON'Ts ❌**
-- Don't perform heavy computations
-- Don't ignore the next delegate
-- Don't modify response after next() completes
-- Don't forget to handle exceptions
-- Don't create tight coupling
+## Common Middleware Patterns
 
-## 🔍 **Debugging Middleware**
+### 1. Request/Response Logging
 
-### **Logging Strategy**
-```csharp
-public async Task InvokeAsync(HttpContext context)
-{
-    var correlationId = Guid.NewGuid().ToString()[..8];
-    
-    using var scope = _logger.BeginScope(new Dictionary<string, object>
-    {
-        ["CorrelationId"] = correlationId,
-        ["RequestPath"] = context.Request.Path
-    });
+Captures request details (method, path, headers) before processing and response details (status code, duration) after. Useful for auditing and debugging.
 
-    _logger.LogInformation("Middleware started");
-    
-    try
-    {
-        await _next(context);
-        _logger.LogInformation("Middleware completed successfully");
-    }
-    catch (Exception ex)
-    {
-        _logger.LogError(ex, "Middleware failed");
-        throw;
-    }
-}
+**Key consideration**: Buffer the response body stream if you need to read it, since the response stream is forward-only by default.
+
+### 2. Global Exception Handling
+
+Wraps the entire pipeline in a try-catch. When an exception occurs:
+- Logs the full exception details
+- Returns a consistent error response format (e.g., ProblemDetails)
+- Prevents stack traces from leaking to clients in production
+- Can return different responses based on exception type (NotFound → 404, Validation → 400, etc.)
+
+### 3. Performance/Timing Middleware
+
+Starts a `Stopwatch` before `next()` and stops it after. Can:
+- Add timing headers (e.g., `X-Processing-Time`)
+- Log slow requests that exceed a threshold
+- Feed metrics to monitoring systems
+
+### 4. Correlation ID / Request ID
+
+Generates or propagates a unique identifier for each request:
+- Checks if `X-Correlation-ID` header exists on the incoming request
+- If not, generates a new GUID
+- Adds it to response headers and makes it available for logging
+- Enables tracing a single request across multiple services and log entries
+
+### 5. Security Headers
+
+Adds defensive HTTP headers to responses:
+- `X-Content-Type-Options: nosniff` — Prevents MIME type sniffing
+- `X-Frame-Options: DENY` — Prevents clickjacking
+- `X-XSS-Protection` — Browser XSS filter
+- `Content-Security-Policy` — Controls resource loading
+- `Strict-Transport-Security` — Forces HTTPS
+
+### 6. Rate Limiting
+
+Tracks requests per client (by IP, API key, or user) within a time window. Returns `429 Too Many Requests` when the limit is exceeded. Approaches:
+- **Fixed window** — Simple counter per time window
+- **Sliding window** — More accurate, avoids burst at window boundaries
+- **Token bucket** — Allows burst traffic up to a limit
+- **ASP.NET Core built-in** — `AddRateLimiter()` (available in .NET 7+)
+
+## Middleware vs Action Filters
+
+| Aspect | Middleware | Action Filters |
+|---|---|---|
+| **Scope** | All requests (including static files, non-MVC) | Only MVC/API controller actions |
+| **Access to** | HttpContext only | ActionContext, ModelState, action arguments |
+| **Pipeline position** | Earlier in pipeline, wraps everything | Inside MVC pipeline, closer to action |
+| **Use for** | Cross-cutting: logging, CORS, auth, error handling | MVC-specific: validation, caching, authorization policies |
+| **Short-circuit** | Returns response directly | Sets `context.Result` |
+
+**Rule of thumb**: If it applies to _all_ HTTP requests, use middleware. If it applies only to _controller actions_, use filters.
+
+## Dependency Injection in Middleware
+
+### Singleton Services (Constructor Injection)
+
+Services with singleton lifetime can be injected via the constructor because middleware itself is singleton.
+
+### Scoped/Transient Services (Method Injection)
+
+Scoped or transient services must be injected as parameters on `InvokeAsync()`, not in the constructor. This ensures a new instance is created per request.
+
+Common pattern for accessing scoped services:
+
+```
+InvokeAsync(HttpContext context, IMyService service, ILogger<MyMiddleware> logger)
 ```
 
-## 🎓 **Learning Benefits**
+The DI container resolves these parameters fresh for each request.
 
-1. **Request Pipeline Understanding** - How ASP.NET Core processes requests
-2. **Cross-Cutting Concerns** - Implementing features that span multiple layers
-3. **Performance Optimization** - Monitoring and improving request processing
-4. **Error Handling** - Consistent error responses across the application
-5. **Testing Skills** - Unit and integration testing of middleware components
+## Middleware Best Practices
+
+### Do
+- Keep middleware **focused** — each middleware should do one thing
+- Handle **exceptions** in middleware to prevent pipeline crashes
+- Use **async/await** properly — never block with `.Result` or `.Wait()`
+- Make middleware **configurable** through options pattern
+- Add **logging** for debugging and monitoring
+- Ensure proper **disposal** of resources
+- Test middleware in **isolation** with unit tests
+
+### Don't
+- Perform **heavy computation** — middleware runs on every request
+- Modify the **response body after calling next()** — headers may already be sent
+- Forget to call `next()` unless intentionally short-circuiting
+- Create **tight coupling** between middleware components
+- Store **per-request state** in middleware fields (middleware is singleton!)
+- Throw exceptions for **expected conditions** — use proper response codes instead
+
+## Terminal vs Non-Terminal Middleware
+
+| Type | Behavior | Registration |
+|---|---|---|
+| **Non-terminal** | Calls `next()`, request continues through pipeline | `app.Use()` |
+| **Terminal** | Does NOT call `next()`, pipeline stops here | `app.Run()` |
+| **Conditional** | Only runs for specific paths/conditions | `app.Map()`, `app.MapWhen()` |
+
+### Branch Middleware
+
+- `app.Map("/path", branch => ...)` — Branches the pipeline for a specific path prefix
+- `app.MapWhen(predicate, branch => ...)` — Branches based on any condition
+- `app.UseWhen(predicate, branch => ...)` — Like `MapWhen` but re-joins the main pipeline
+
+## Advanced Concepts
+
+### Middleware Pipeline Branching
+
+The pipeline can split into branches that handle requests independently. Useful for:
+- Different processing for API vs MVC requests
+- Health check endpoints that bypass most middleware
+- WebSocket upgrade handling
+
+### Middleware vs Endpoint Routing
+
+With endpoint routing (introduced in .NET Core 3.0):
+- **Routing middleware** (`UseRouting`) determines which endpoint matches the request
+- **Endpoint middleware** (`UseEndpoints`/`MapControllers`) executes the matched endpoint
+- Middleware between these two can access endpoint metadata (e.g., `[Authorize]` attributes)
+
+This separation allows authorization middleware to see endpoint-specific policies before the action executes.
+
+### HttpContext.Items
+
+A per-request dictionary for passing data between middleware components. Any middleware can write to `context.Items["key"]` and subsequent middleware can read it. Useful for sharing computed values (e.g., correlation IDs, timing data) without coupling middleware classes.
 
 ---
 
-*Middleware is the backbone of ASP.NET Core's request processing. Understanding how to create, test, and optimize middleware is crucial for building robust web applications.*
+*Middleware is the backbone of ASP.NET Core's request processing. Understanding the pipeline, execution order, and proper patterns is essential for building robust, maintainable web applications.*

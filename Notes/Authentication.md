@@ -1,188 +1,236 @@
-# Simple JWT Authentication & Role-Based Authorization
+# JWT Authentication & Role-Based Authorization
 
-## 🔐 **Overview**
+## What is Authentication vs Authorization?
 
-This guide covers implementing minimal JWT authentication and role-based authorization in .NET 8 Web API with the least possible changes to existing code.
+**Authentication** answers "Who are you?" — verifying a user's identity through credentials (username/password, tokens, certificates). **Authorization** answers "What can you do?" — determining what resources an authenticated user can access.
 
-## 🏗️ **Implementation Strategy**
+In web APIs, these are separate concerns handled by different middleware in the request pipeline.
 
-### **1. Minimal Dependencies**
-- `Microsoft.AspNetCore.Authentication.JwtBearer` - JWT token validation
-- `System.IdentityModel.Tokens.Jwt` - JWT token creation
-- `BCrypt.Net-Next` - Password hashing
+## Understanding JWT (JSON Web Tokens)
 
-### **2. Core Components**
-- **Simple User Model** - Just ID, Username, Password, Role
-- **JWT Service** - Token generation and validation
-- **Auth Controller** - Login endpoint
-- **Authorization Attributes** - Role-based protection
+### What is a JWT?
 
-## 💡 **Key Concepts**
+A JWT is a compact, self-contained token format used for securely transmitting information between parties as a JSON object. It's digitally signed, so the information can be verified and trusted.
 
-### **JWT Claims**
-Claims are key-value pairs embedded in JWT tokens:
-```json
-{
-  "sub": "123",           // User ID
-  "unique_name": "john",  // Username  
-  "role": "User",         // User Role
-  "exp": 1645123456       // Expiration
-}
+### JWT Structure
+
+A JWT consists of three Base64-encoded parts separated by dots:
+
+```
+Header.Payload.Signature
 ```
 
-### **Role-Based Authorization**
-```csharp
-[Authorize]                    // Any authenticated user
-[Authorize(Roles = "Admin")]   // Admin users only
-[Authorize(Roles = "User,Admin")] // User OR Admin
+- **Header** — Contains the token type (`JWT`) and the signing algorithm (e.g., `HS256`, `RS256`)
+- **Payload** — Contains _claims_ — statements about the user and additional metadata
+- **Signature** — Created by hashing the encoded header + payload with a secret key, ensuring token integrity
+
+### Claims — The Core of JWT
+
+Claims are key-value pairs embedded in the token payload. They carry identity and authorization data:
+
+| Claim Type | Purpose | Example |
+|---|---|---|
+| `sub` (Subject) | Unique user identifier | `"123"` |
+| `name` | Display name | `"john_doe"` |
+| `role` | User's role(s) | `"Admin"` |
+| `exp` (Expiration) | Token expiry timestamp | `1645123456` |
+| `iss` (Issuer) | Who issued the token | `"TaskManagementAPI"` |
+| `aud` (Audience) | Intended recipient | `"TaskManagementAPI-Users"` |
+| `iat` (Issued At) | When token was created | `1645119856` |
+
+**Registered claims** (`sub`, `exp`, `iss`, `aud`, `iat`) are predefined by the JWT spec. You can also define **custom claims** for application-specific data.
+
+### Why JWT for APIs?
+
+| Benefit | Explanation |
+|---|---|
+| **Stateless** | Server doesn't need to store session data — the token itself contains everything |
+| **Scalable** | Works across multiple servers/microservices without shared session stores |
+| **Self-contained** | Token carries user info, reducing database lookups on every request |
+| **Cross-domain** | Works seamlessly across different domains and services |
+| **Standard** | Industry-standard (RFC 7519), widely supported across languages and platforms |
+
+### JWT vs Other Token Types
+
+| Feature | JWT | Opaque Tokens | Session Cookies |
+|---|---|---|---|
+| Self-contained | Yes | No | No |
+| Server storage needed | No | Yes (token store) | Yes (session store) |
+| Scalability | High | Medium | Low |
+| Revocation | Hard (needs blocklist) | Easy (delete from store) | Easy (delete session) |
+| Cross-domain | Easy | Hard | Hard (CORS issues) |
+
+## Token Lifecycle
+
+```
+1. Client sends credentials (login)
+2. Server validates credentials against database
+3. Server generates JWT with user claims
+4. Server returns JWT to client
+5. Client stores JWT (localStorage, cookie, memory)
+6. Client sends JWT in Authorization header on subsequent requests
+7. Server validates JWT signature + expiration on each request
+8. Server extracts claims and authorizes the request
 ```
 
-## 🚀 **Implementation Steps**
+## Authentication Pipeline in ASP.NET Core
 
-### **Step 1: Add JWT Dependencies**
-```xml
-<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
-<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="7.1.2" />
-<PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+The authentication system in ASP.NET Core follows a layered architecture:
+
+### Middleware Order (Critical)
+
+The order of middleware registration is important because each middleware processes the request sequentially:
+
+```
+Request → Exception Handling → HTTPS Redirect → Routing → Authentication → Authorization → Controller
 ```
 
-### **Step 2: JWT Configuration**
-```json
-// appsettings.json
-{
-  "JwtSettings": {
-    "SecretKey": "your-super-secret-key-minimum-256-bits-long",
-    "Issuer": "TaskManagementAPI",
-    "Audience": "TaskManagementAPI-Users",
-    "ExpirationMinutes": 60
-  }
-}
+- **Authentication middleware** examines the incoming token and establishes the user identity (`HttpContext.User`)
+- **Authorization middleware** checks whether the authenticated user has permission for the requested resource
+- If authentication is placed after authorization, the system won't know who the user is when checking permissions
+
+### Authentication Schemes
+
+ASP.NET Core supports multiple authentication schemes simultaneously:
+- **JWT Bearer** — Token-based authentication for APIs
+- **Cookie** — Session-based for web apps
+- **OAuth/OpenID Connect** — Third-party authentication (Google, Microsoft, etc.)
+- **API Key** — Simple key-based authentication
+
+A **default scheme** handles unauthenticated requests. Multiple schemes can coexist for different parts of an application.
+
+## Role-Based Authorization (RBAC)
+
+### Concept
+
+RBAC restricts access based on roles assigned to users. Each user has one or more roles, and each resource/endpoint specifies which roles are allowed.
+
+### Authorization Levels
+
+| Level | Description | Use Case |
+|---|---|---|
+| **No attribute** | Public, no auth needed | Health checks, public data |
+| **[Authorize]** | Any authenticated user | General user endpoints |
+| **[Authorize(Roles = "Admin")]** | Specific role only | Administrative functions |
+| **[Authorize(Roles = "User,Admin")]** | Any of listed roles | Shared functionality |
+
+### Policy-Based Authorization (Advanced)
+
+Beyond simple roles, ASP.NET Core supports **policies** which combine multiple requirements:
+- **Claims-based** — User must have specific claims
+- **Custom requirements** — Arbitrary logic (age verification, subscription level, etc.)
+- **Resource-based** — Authorization depends on the specific resource being accessed
+
+## Password Security
+
+### Hashing vs Encryption
+
+| Aspect | Hashing | Encryption |
+|---|---|---|
+| Reversible | No (one-way) | Yes (two-way) |
+| Purpose | Verify passwords | Protect data in transit/storage |
+| Key needed | No (uses salt) | Yes (encryption key) |
+| Use for passwords | Yes | No |
+
+### BCrypt — Industry Standard
+
+BCrypt is the recommended password hashing algorithm because:
+- **Adaptive** — Work factor can be increased as hardware improves
+- **Salted** — Automatically generates and stores unique salts per password
+- **Slow by design** — Makes brute-force attacks computationally expensive
+- **Work factor** — Controls the computational cost (typically 10-12 rounds)
+
+### Password Verification Flow
+
+```
+Registration: Password → BCrypt.HashPassword(password) → Store hash in DB
+Login:        Password → BCrypt.Verify(password, storedHash) → true/false
 ```
 
-### **Step 3: Simple User Model**
-```csharp
-public class User
-{
-    public int Id { get; set; }
-    public string Username { get; set; }
-    public string PasswordHash { get; set; }
-    public string Role { get; set; } = "User"; // "User" or "Admin"
-}
+## Token Validation Parameters
+
+When the server receives a JWT, it validates several aspects:
+
+| Parameter | What It Checks |
+|---|---|
+| **ValidateIssuerSigningKey** | Signature matches the expected signing key |
+| **ValidateIssuer** | Token's `iss` claim matches expected issuer |
+| **ValidateAudience** | Token's `aud` claim matches expected audience |
+| **ValidateLifetime** | Token hasn't expired (`exp` claim) |
+| **ClockSkew** | Allowed time difference between server clocks (default: 5 min) |
+
+## High-Level Implementation Architecture
+
+### Components Needed
+
+1. **User Model** — Simple entity with Id, Username, PasswordHash, Role
+2. **JWT Service** — Responsible for token generation; reads JWT settings (secret, issuer, audience, expiration) from configuration
+3. **Auth Controller** — Exposes login/register endpoints; validates credentials, calls JWT service
+4. **Middleware Configuration** — Registers JWT Bearer authentication scheme in `Program.cs` with validation parameters
+5. **Endpoint Protection** — Apply `[Authorize]` and `[Authorize(Roles = "...")]` attributes to controllers/actions
+
+### Configuration Requirements
+
+- JWT settings stored in `appsettings.json` (SecretKey, Issuer, Audience, ExpirationMinutes)
+- Secret key must be at least 256 bits (32 characters) for HMAC-SHA256
+- Connection between configuration and JWT service through dependency injection
+
+### Request Flow
+
+```
+POST /api/auth/login → Validate credentials → Generate JWT → Return token
+GET /api/tasks (with Bearer token) → Validate JWT → Extract claims → Check authorization → Execute action
 ```
 
-### **Step 4: JWT Service**
-```csharp
-public interface IJwtService
-{
-    string GenerateToken(User user);
-}
+## HTTP Status Codes in Auth Context
 
-public class JwtService : IJwtService
-{
-    public string GenerateToken(User user)
-    {
-        var claims = new[]
-        {
-            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim(ClaimTypes.Name, user.Username),
-            new Claim(ClaimTypes.Role, user.Role)
-        };
-        
-        // Create and return JWT token
-    }
-}
-```
+| Code | Meaning | When Returned |
+|---|---|---|
+| `200 OK` | Successful login | Valid credentials, token returned |
+| `401 Unauthorized` | Identity not established | Missing token, invalid token, expired token, bad credentials |
+| `403 Forbidden` | Identity known, insufficient permissions | Valid token but wrong role for the endpoint |
 
-### **Step 5: Auth Controller**
-```csharp
-[ApiController]
-[Route("api/[controller]")]
-public class AuthController : ControllerBase
-{
-    [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginDto login)
-    {
-        // Validate user credentials
-        // Generate JWT token
-        // Return token
-    }
-}
-```
+## Security Best Practices
 
-### **Step 6: Configure Authentication Pipeline**
-```csharp
-// Program.cs
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options => {
-        // Configure JWT validation
-    });
+### Token Security
+- **Short expiration** — 15-60 minutes for access tokens
+- **Refresh tokens** — Long-lived tokens to get new access tokens without re-login
+- **HTTPS only** — Never transmit tokens over unencrypted connections
+- **Secure storage** — HttpOnly cookies preferred over localStorage (prevents XSS)
 
-// Middleware order is critical!
-app.UseAuthentication(); // First - Who you are
-app.UseAuthorization();  // Second - What you can do
-```
+### Key Management
+- **Strong secret keys** — Minimum 256-bit keys, randomly generated
+- **Key rotation** — Periodically change signing keys
+- **Environment-specific** — Different keys for dev/staging/production
+- **Secret management** — Use Azure Key Vault, AWS Secrets Manager, etc. (never hardcode)
 
-### **Step 7: Protect Endpoints**
-```csharp
-[Authorize] // Requires authentication
-public class TasksController : ControllerBase
-{
-    [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")] // Only admins can delete
-    public async Task<IActionResult> DeleteTask(int id) { }
-}
-```
+### Common Vulnerabilities
 
-## 🧪 **Testing Authentication**
+| Vulnerability | Description | Mitigation |
+|---|---|---|
+| **Token theft** | Attacker steals JWT from client | Short expiration, HTTPS, secure storage |
+| **Brute force** | Repeated login attempts | Rate limiting, account lockout |
+| **JWT alg:none** | Attacker removes signature | Always validate signing algorithm |
+| **Weak secrets** | Predictable signing keys | Use cryptographically random keys |
+| **Token replay** | Reusing stolen tokens | Short expiration, token binding |
 
-### **1. Login Request**
-```http
-POST /api/auth/login
-{
-    "username": "admin",
-    "password": "Admin123!"
-}
-```
+## Advanced Concepts
 
-### **2. Response**
-```json
-{
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "expiration": "2026-02-19T12:00:00Z"
-}
-```
+### Refresh Token Pattern
+- **Access token** — Short-lived (15 min), used for API calls
+- **Refresh token** — Long-lived (days/weeks), stored securely, used only to get new access tokens
+- When access token expires, client sends refresh token to get a new access token without re-entering credentials
 
-### **3. Using Token**
-```http
-GET /api/tasks
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-```
+### OAuth 2.0 & OpenID Connect
+- **OAuth 2.0** — Authorization framework for delegated access (e.g., "Login with Google")
+- **OpenID Connect** — Identity layer on top of OAuth 2.0, provides authentication
+- **Flows** — Authorization Code (web apps), Client Credentials (server-to-server), PKCE (SPAs/mobile)
 
-## 📋 **Default Test Users**
-- **Username:** `admin` | **Password:** `Admin123!` | **Role:** Admin
-- **Username:** `user` | **Password:** `User123!` | **Role:** User
-
-## 🔧 **Key HTTP Status Codes**
-- `200 OK` - Successful login
-- `401 Unauthorized` - Invalid credentials or no token
-- `403 Forbidden` - Valid token but insufficient role permissions
-
-## 🎯 **Learning Benefits**
-
-1. **Stateless Authentication** - No server-side session storage
-2. **Claims-Based Identity** - Flexible user information in tokens
-3. **Role Separation** - Clear admin vs user permissions
-4. **Industry Standard** - JWT is widely used for APIs
-5. **Easy Integration** - Works with Swagger UI for testing
-
-## 🚨 **Security Notes**
-
-- **Secret Key**: Must be 256+ bits for production
-- **HTTPS Only**: Never send JWT over HTTP
-- **Token Expiration**: Keep it short (15-60 minutes)
-- **Password Hashing**: Always use BCrypt or similar
-- **Input Validation**: Validate all login inputs
+### Claims Transformation
+- Middleware can modify or enrich claims after authentication
+- Useful for adding database-driven permissions not stored in the token
+- Example: Token has `userId` claim → middleware looks up user's permissions and adds them as claims
 
 ---
 
-*This implementation provides enterprise-grade authentication with minimal code changes to your existing API.*
+*JWT authentication provides a stateless, scalable security model for APIs. The key is understanding that the token itself carries identity information, and the server only needs to validate the signature to trust it.*

@@ -1,447 +1,233 @@
-# FluentValidation - Elegant Validation Rules Guide
+# FluentValidation
 
-## 🔍 **What is FluentValidation?**
+## What is FluentValidation?
 
-FluentValidation is a .NET library that uses a **fluent interface** and **lambda expressions** for building strongly-typed validation rules. It provides a clean, expressive way to define complex validation logic.
+FluentValidation is a .NET library for building strongly-typed validation rules using a fluent interface and lambda expressions. Instead of decorating model properties with attributes (DataAnnotations), you define validation logic in separate validator classes using an expressive, readable syntax.
 
-## 🎯 **Why Use FluentValidation?**
+## Why FluentValidation over DataAnnotations?
 
-### **Problems with DataAnnotations:**
-- ❌ Limited validation logic (basic attributes only)
-- ❌ Hard to test validation rules in isolation
-- ❌ Difficult to create complex, conditional validations
-- ❌ No easy way to customize error messages dynamically
-- ❌ Tight coupling between models and validation logic
+| Aspect | DataAnnotations | FluentValidation |
+|---|---|---|
+| **Location** | Attributes on model properties | Separate validator classes |
+| **Separation of concerns** | Validation mixed with model | Clean separation |
+| **Complex logic** | Very limited (basic attributes only) | Full C# power (conditionals, async, cross-property) |
+| **Testability** | Hard to unit test in isolation | Easy — just instantiate validator and call `Validate()` |
+| **Custom messages** | Static strings only | Dynamic, runtime-computed messages |
+| **Conditional rules** | Not supported | Built-in `.When()` / `.Unless()` |
+| **Async validation** | Not supported | First-class `.MustAsync()` support |
+| **Reusability** | Limited | Composable validators, shared rules |
 
-### **FluentValidation Solutions:**
-- ✅ **Rich Validation Rules** - Complex logic with easy syntax
-- ✅ **Separation of Concerns** - Validators are separate classes
-- ✅ **Easy Testing** - Unit test validation rules independently
-- ✅ **Conditional Validation** - Rules based on other properties
-- ✅ **Custom Error Messages** - Dynamic, localized messages
-- ✅ **Extensible** - Create custom validation rules easily
+## Core Concepts
 
-## 🏗️ **How FluentValidation Works**
+### Validator Classes
+
+Each DTO/model that needs validation gets its own validator class that inherits from `AbstractValidator<T>`. Rules are defined in the constructor using `RuleFor()`.
+
+A validator class encapsulates all validation logic for a single type. This follows the Single Responsibility Principle — the model defines data shape, the validator defines validity constraints.
+
+### The Validation Pipeline
 
 ```
-Request → Model Binding → FluentValidation → Controller Action
-                            ↓ (if invalid)
-                        ValidationException → Error Response
+HTTP Request → Model Binding → FluentValidation (automatic) → Controller Action
+                                     ↓ (if invalid)
+                              ModelState.IsValid = false → 400 Bad Request
 ```
 
-1. **Define Validators** - Create validator classes for your models
-2. **Register Validators** - Add to DI container
-3. **Automatic Validation** - ASP.NET Core runs validation automatically
-4. **Handle Results** - Get validation errors in ModelState
+When registered with ASP.NET Core, FluentValidation runs automatically during model binding. Invalid models populate `ModelState` with errors, and the API Behavior convention returns `400 Bad Request` automatically before your controller code even executes.
 
-## 📚 **Basic Implementation**
+### Validation Results
 
-### **1. Install NuGet Package**
-```xml
-<PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
-```
+A `ValidationResult` contains:
+- `IsValid` — boolean indicating overall validity
+- `Errors` — collection of `ValidationFailure` objects, each with:
+  - `PropertyName` — which property failed
+  - `ErrorMessage` — human-readable error description
+  - `AttemptedValue` — the value that was rejected
+  - `ErrorCode` — machine-readable error identifier
 
-### **2. Create a Validator Class**
-```csharp
-public class CreateTaskValidator : AbstractValidator<CreateTaskDto>
-{
-    public CreateTaskValidator()
-    {
-        RuleFor(x => x.Title)
-            .NotEmpty().WithMessage("Task title is required")
-            .Length(3, 100).WithMessage("Title must be between 3 and 100 characters");
-            
-        RuleFor(x => x.Priority)
-            .IsInEnum().WithMessage("Invalid priority value");
-            
-        RuleFor(x => x.DueDate)
-            .GreaterThan(DateTime.Now)
-            .When(x => x.DueDate.HasValue)
-            .WithMessage("Due date must be in the future");
-    }
-}
-```
+## Built-In Validators
 
-### **3. Register in DI Container**
-```csharp
-// Program.cs
-builder.Services.AddFluentValidationAutoValidation();
-builder.Services.AddValidatorsFromAssemblyContaining<CreateTaskValidator>();
-```
+FluentValidation provides a rich set of built-in validators:
 
-### **4. Use in Controller**
-```csharp
-[HttpPost]
-public async Task<IActionResult> CreateTask([FromBody] CreateTaskDto dto)
-{
-    // Validation happens automatically
-    if (!ModelState.IsValid)
-    {
-        return BadRequest(ModelState);
-    }
-    
-    // Process valid data
-    var task = await _taskService.CreateTaskAsync(dto);
-    return CreatedAtAction(nameof(GetTask), new { id = task.Id }, task);
-}
-```
+### String Validators
 
-## 🔧 **Common Validation Rules**
+| Validator | Purpose |
+|---|---|
+| `NotEmpty()` | Not null, not empty string, not whitespace |
+| `NotNull()` | Not null (but allows empty string) |
+| `Length(min, max)` | String length within range |
+| `MinimumLength(n)` | At least N characters |
+| `MaximumLength(n)` | At most N characters |
+| `EmailAddress()` | Valid email format |
+| `Matches(regex)` | Matches regular expression pattern |
 
-### **String Validations**
-```csharp
-RuleFor(x => x.Email)
-    .NotEmpty()
-    .EmailAddress()
-    .WithMessage("Valid email address is required");
+### Numeric Validators
 
-RuleFor(x => x.Password)
-    .NotEmpty()
-    .MinimumLength(8)
-    .Matches(@"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)")
-    .WithMessage("Password must contain uppercase, lowercase, and number");
+| Validator | Purpose |
+|---|---|
+| `GreaterThan(n)` | Value > n |
+| `GreaterThanOrEqualTo(n)` | Value >= n |
+| `LessThan(n)` | Value < n |
+| `LessThanOrEqualTo(n)` | Value <= n |
+| `InclusiveBetween(a, b)` | a <= value <= b |
+| `ExclusiveBetween(a, b)` | a < value < b |
+| `PrecisionScale(p, s)` | Decimal precision and scale |
 
-RuleFor(x => x.PhoneNumber)
-    .NotEmpty()
-    .Matches(@"^\+?[1-9]\d{1,14}$")
-    .WithMessage("Invalid phone number format");
-```
+### General Validators
 
-### **Number Validations**
-```csharp
-RuleFor(x => x.Age)
-    .GreaterThanOrEqualTo(18)
-    .LessThan(100)
-    .WithMessage("Age must be between 18 and 100");
+| Validator | Purpose |
+|---|---|
+| `Equal(value)` | Must equal a specific value or another property |
+| `NotEqual(value)` | Must not equal a value |
+| `IsInEnum()` | Value must be a defined enum member |
+| `Must(predicate)` | Custom synchronous validation logic |
+| `MustAsync(predicate)` | Custom asynchronous validation logic |
 
-RuleFor(x => x.Price)
-    .GreaterThan(0)
-    .PrecisionScale(10, 2, false)
-    .WithMessage("Price must be positive with max 2 decimal places");
-```
+## Advanced Validation Concepts
 
-### **Collection Validations**
-```csharp
-RuleFor(x => x.Tags)
-    .NotEmpty()
-    .WithMessage("At least one tag is required");
+### Conditional Validation
 
-RuleForEach(x => x.Tags)
-    .NotEmpty()
-    .Length(2, 20)
-    .WithMessage("Each tag must be 2-20 characters");
-```
+Rules that only apply in certain situations:
 
-### **Date/Time Validations**
-```csharp
-RuleFor(x => x.StartDate)
-    .NotEmpty()
-    .GreaterThanOrEqualTo(DateTime.Today)
-    .WithMessage("Start date cannot be in the past");
+- `.When(condition)` — Rule only runs if condition is true
+- `.Unless(condition)` — Rule only runs if condition is false
+- Conditions receive the model instance, so you can check other property values
 
-RuleFor(x => x.EndDate)
-    .GreaterThan(x => x.StartDate)
-    .WithMessage("End date must be after start date");
-```
+**Use case**: "Company name is required only for business accounts" — use `.When(x => x.AccountType == AccountType.Business)`
 
-## 🎛️ **Advanced Features**
+### Cross-Property Validation
 
-### **Conditional Validation**
-```csharp
-RuleFor(x => x.CompanyName)
-    .NotEmpty()
-    .When(x => x.UserType == UserType.Business)
-    .WithMessage("Company name is required for business users");
+Validating relationships between multiple properties:
+- `.Equal(x => x.OtherProperty)` — Password confirmation must match password
+- `.GreaterThan(x => x.StartDate)` — End date must be after start date
+- `.Must()` with a predicate that accesses the full object
 
-RuleFor(x => x.VatNumber)
-    .NotEmpty()
-    .Unless(x => x.Country == "US")
-    .WithMessage("VAT number is required for non-US customers");
-```
+### Async Validation
 
-### **Complex Validations**
-```csharp
-RuleFor(x => x)
-    .Must(BeValidBusinessUser)
-    .WithMessage("Business users must have valid company information");
+For rules that need to check external resources (database, API):
+- `.MustAsync(async (value, cancellation) => ...)` — Custom async predicate
+- Receives a `CancellationToken` for proper async cancellation
+- **Use sparingly** — every async rule adds latency to validation
 
-private bool BeValidBusinessUser(CreateUserDto dto)
-{
-    if (dto.UserType != UserType.Business)
-        return true; // Skip validation for non-business users
-        
-    return !string.IsNullOrEmpty(dto.CompanyName) 
-           && !string.IsNullOrEmpty(dto.VatNumber)
-           && dto.CompanyName.Length >= 3;
-}
-```
+**Common use case**: Checking uniqueness (e.g., email not already in database)
 
-### **Async Validation**
-```csharp
-RuleFor(x => x.Email)
-    .MustAsync(BeUniqueEmail)
-    .WithMessage("Email address is already in use");
+### Collection Validation
 
-private async Task<bool> BeUniqueEmail(string email, CancellationToken cancellationToken)
-{
-    var user = await _userService.GetByEmailAsync(email);
-    return user == null;
-}
-```
+| Method | Purpose |
+|---|---|
+| `RuleFor(x => x.Items)` | Validate the collection itself (NotEmpty, count, etc.) |
+| `RuleForEach(x => x.Items)` | Apply rules to each element in the collection |
+| `.SetValidator(new ItemValidator())` | Apply a child validator to complex child objects |
 
-### **Cross-Property Validation**
-```csharp
-RuleFor(x => x.ConfirmPassword)
-    .Equal(x => x.Password)
-    .WithMessage("Passwords do not match");
+### RuleSets
 
-RuleFor(x => x)
-    .Must(x => x.EndDate > x.StartDate)
-    .WithMessage("End date must be after start date")
-    .OverridePropertyName("EndDate");
-```
+Group rules into named sets that run only when explicitly invoked:
+- Define: `RuleSet("Create", () => { RuleFor(...) })`
+- Invoke: `validator.Validate(model, options => options.IncludeRuleSets("Create"))`
+- Use cases: Different rules for create vs update, or different validation levels (quick vs thorough)
 
-## 🧪 **Testing Validation**
+## Custom Validators
 
-### **Unit Testing Validators**
-```csharp
-[Test]
-public void Should_Have_Error_When_Title_Is_Empty()
-{
-    // Arrange
-    var model = new CreateTaskDto { Title = "" };
-    var validator = new CreateTaskValidator();
-    
-    // Act
-    var result = validator.TestValidate(model);
-    
-    // Assert
-    result.ShouldHaveValidationErrorFor(x => x.Title)
-          .WithErrorMessage("Task title is required");
-}
+### Extension Method Validators
 
-[Test]
-public void Should_Not_Have_Error_When_Valid()
-{
-    // Arrange
-    var model = new CreateTaskDto 
-    { 
-        Title = "Valid Task",
-        Priority = TaskPriority.Medium 
-    };
-    var validator = new CreateTaskValidator();
-    
-    // Act
-    var result = validator.TestValidate(model);
-    
-    // Assert
-    result.ShouldNotHaveAnyValidationErrors();
-}
-```
+Create reusable validation rules as extension methods on `IRuleBuilder<T, TProperty>`. This lets you chain custom rules like built-in ones: `RuleFor(x => x.Title).MustBeValidTaskTitle()`.
 
-### **Integration Testing**
-```csharp
-[Test]
-public async Task CreateTask_WithInvalidData_ReturnsBadRequest()
-{
-    // Arrange
-    var invalidTask = new CreateTaskDto { Title = "" };
-    
-    // Act
-    var response = await _client.PostAsJsonAsync("/api/tasks", invalidTask);
-    
-    // Assert
-    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    
-    var content = await response.Content.ReadAsStringAsync();
-    Assert.Contains("Task title is required", content);
-}
-```
+### Property Validators
 
-## 🎨 **Custom Validators**
+Create a class inheriting from `PropertyValidator<T, TProperty>` for more complex reusable validators that need access to the full validation context. Override `IsValid()` with your logic.
 
-### **Create Custom Rule**
-```csharp
-public static class CustomValidators
-{
-    public static IRuleBuilderOptions<T, string> MustBeValidTaskTitle<T>(
-        this IRuleBuilder<T, string> ruleBuilder)
-    {
-        return ruleBuilder
-            .Must(title => !string.IsNullOrWhiteSpace(title))
-            .Must(title => !title.StartsWith(" ") && !title.EndsWith(" "))
-            .Must(title => !title.Contains("  ")) // No double spaces
-            .WithMessage("Task title must not have leading/trailing spaces or double spaces");
-    }
-}
+### When to Use Which
 
-// Usage
-RuleFor(x => x.Title).MustBeValidTaskTitle();
-```
+| Approach | Use When |
+|---|---|
+| Inline `.Must()` | One-off rule, only used in one validator |
+| Extension method | Reusable rule across multiple validators |
+| `PropertyValidator<T, TProperty>` | Complex rule needing validation context, custom error templates |
 
-### **Property Validator**
-```csharp
-public class NoSwearWordsValidator<T> : PropertyValidator<T, string>
-{
-    private readonly string[] _swearWords = { "bad", "worse", "terrible" };
-    
-    public override bool IsValid(ValidationContext<T> context, string value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return true;
-            
-        return !_swearWords.Any(word => 
-            value.Contains(word, StringComparison.OrdinalIgnoreCase));
-    }
-    
-    public override string Name => "NoSwearWordsValidator";
-    
-    protected override string GetDefaultMessageTemplate(string errorCode)
-    {
-        return "'{PropertyName}' contains inappropriate language";
-    }
-}
-```
+## Error Message Customization
 
-## 📊 **Error Handling & Responses**
+### Static Messages
+`.WithMessage("Title is required")` — Simple static string
 
-### **Default Error Response**
-```json
-{
-  "type": "https://tools.ietf.org/html/rfc7231#section-6.5.1",
-  "title": "One or more validation errors occurred.",
-  "status": 400,
-  "errors": {
-    "Title": ["Task title is required"],
-    "Priority": ["Invalid priority value"]
-  }
-}
-```
+### Parameterized Messages
+`.WithMessage("'{PropertyName}' must be at least {MinLength} characters")` — Uses built-in placeholders
 
-### **Custom Error Response**
-```csharp
-public class ValidationFilter : IActionFilter
-{
-    public void OnActionExecuting(ActionExecutingContext context)
-    {
-        if (!context.ModelState.IsValid)
-        {
-            var errors = context.ModelState
-                .Where(x => x.Value.Errors.Count > 0)
-                .Select(x => new ValidationError
-                {
-                    Field = x.Key,
-                    Messages = x.Value.Errors.Select(e => e.ErrorMessage).ToArray()
-                })
-                .ToArray();
+### Dynamic Messages
+`.WithMessage(x => $"User {x.Username} is not valid")` — Runtime-computed from model values
 
-            var response = new ValidationErrorResponse
-            {
-                Message = "Validation failed",
-                Errors = errors,
-                Timestamp = DateTime.UtcNow
-            };
+### Error Codes
+`.WithErrorCode("TITLE_REQUIRED")` — Machine-readable code for programmatic error handling on the client side
 
-            context.Result = new BadRequestObjectResult(response);
-        }
-    }
-    
-    public void OnActionExecuted(ActionExecutedContext context) { }
-}
-```
+### Property Name Override
+`.OverridePropertyName("title")` — Change the property name in error messages (useful when JSON property names differ from C# names)
 
-## 🌍 **Localization**
+## Integration with ASP.NET Core
 
-### **Localized Messages**
-```csharp
-public class CreateTaskValidator : AbstractValidator<CreateTaskDto>
-{
-    public CreateTaskValidator(IStringLocalizer<CreateTaskValidator> localizer)
-    {
-        RuleFor(x => x.Title)
-            .NotEmpty()
-            .WithMessage(x => localizer["TaskTitleRequired"])
-            .Length(3, 100)
-            .WithMessage(x => localizer["TaskTitleLength", 3, 100]);
-    }
-}
-```
+### Automatic Validation
 
-## 📈 **Performance Considerations**
+Two ways to integrate:
+1. **Auto-validation** — Register `AddFluentValidationAutoValidation()` to run validators during model binding automatically
+2. **Manual validation** — Inject `IValidator<T>` and call `Validate()` / `ValidateAsync()` explicitly in controller or service
 
-### **DO's ✅**
-- ✅ **Cache Validators** - Register as Singleton when possible
-- ✅ **Use Async Sparingly** - Only when accessing external resources
-- ✅ **Validate Early** - Stop on first failure for expensive validations
-- ✅ **Use RuleSets** - Group related validations
+### Custom Error Response
 
-### **DON'Ts ❌**
-- ❌ **Don't Over-Validate** - Balance between security and performance
-- ❌ **Avoid Heavy Database Calls** - In every validation rule
-- ❌ **Don't Duplicate Logic** - Keep validation DRY
+The default ASP.NET Core behavior returns `ProblemDetails` format for validation errors. You can customize this by configuring `ApiBehaviorOptions.InvalidModelStateResponseFactory` to return your own error response format.
 
-## 🔄 **Migration from DataAnnotations**
+### Validator Registration
 
-### **Before (DataAnnotations)**
-```csharp
-public class CreateTaskDto
-{
-    [Required(ErrorMessage = "Title is required")]
-    [StringLength(100, MinimumLength = 3)]
-    public string Title { get; set; }
-    
-    [Range(1, 4, ErrorMessage = "Priority must be 1-4")]
-    public TaskPriority Priority { get; set; }
-}
-```
+- `AddValidatorsFromAssemblyContaining<T>()` — Scans and registers all validators from the assembly
+- Default lifetime is **scoped** (new instance per request)
+- Can register as **singleton** if validators have no injected dependencies
+- Validators can accept DI services in their constructors (e.g., `IUserService` for uniqueness checks)
 
-### **After (FluentValidation)**
-```csharp
-// Clean DTO without validation attributes
-public class CreateTaskDto
-{
-    public string Title { get; set; }
-    public TaskPriority Priority { get; set; }
-}
+## FluentValidation vs Other Approaches
 
-// Separate validator class
-public class CreateTaskValidator : AbstractValidator<CreateTaskDto>
-{
-    public CreateTaskValidator()
-    {
-        RuleFor(x => x.Title)
-            .NotEmpty().WithMessage("Title is required")
-            .Length(3, 100);
-            
-        RuleFor(x => x.Priority)
-            .IsInEnum().WithMessage("Invalid priority value");
-    }
-}
-```
+| Approach | Strengths | Weaknesses |
+|---|---|---|
+| **FluentValidation** | Powerful, testable, clean separation | Extra library dependency |
+| **DataAnnotations** | Built-in, simple, familiar | Limited logic, hard to test |
+| **Manual validation** | Full control, no dependencies | Repetitive, no standardization |
+| **Custom `IValidatableObject`** | Built-in .NET, model-level | Still coupled to model, limited |
 
-## 🎓 **Learning Benefits**
+## Localization
 
-### **For Developers:**
-1. 🧹 **Clean Code** - Separation of concerns between models and validation
-2. 🧪 **Testability** - Easy to unit test validation logic
-3. 🔧 **Flexibility** - Complex conditional validations
-4. 📖 **Readability** - Fluent syntax is self-documenting
+FluentValidation supports localized error messages through:
+- **`IStringLocalizer<T>`** injection into validator constructors
+- **Resource files** (.resx) with translated messages
+- **Built-in language support** — FluentValidation includes default messages in many languages
 
-### **For Applications:**
-1. 🔒 **Data Integrity** - Robust validation ensures clean data
-2. 👥 **User Experience** - Better error messages and handling
-3. 🎯 **Business Rules** - Complex validation logic implementation
-4. 🌐 **Internationalization** - Easy localization support
+## Performance Considerations
 
-## 🚀 **Quick Setup Summary**
+- Validators are typically **scoped** (one per request) — registration as **singleton** avoids repeated allocations when validators have no scoped dependencies
+- **Async rules** add overhead — use synchronous `.Must()` when no I/O is needed
+- **CascadeMode** — Configure `RuleLevelCascadeMode = CascadeMode.Stop` to stop running rules for a property after the first failure (saves processing time)
+- `.ValidateAndThrow()` is convenient but uses exceptions for flow control — prefer `Validate()` and check `IsValid` in performance-sensitive paths
 
-1. **Add Package** ➜ FluentValidation.AspNetCore
-2. **Create Validators** ➜ Inherit from AbstractValidator<T>
-3. **Define Rules** ➜ Use RuleFor() with fluent syntax
-4. **Register Services** ➜ AddFluentValidationAutoValidation()
-5. **Handle Results** ➜ Check ModelState.IsValid
-6. **Test Validators** ➜ Use TestValidate() method
+## Migration from DataAnnotations
+
+The migration path is straightforward:
+1. Remove `[Required]`, `[StringLength]`, etc. attributes from the model
+2. Create a corresponding `AbstractValidator<T>` class
+3. Translate each attribute to its fluent equivalent
+4. Register validators in the DI container
+5. Models become clean POCOs — just properties, no validation logic
+
+## Best Practices
+
+### Do
+- **One validator per model** — keeps validators focused and maintainable
+- **Separate validator classes** from models — never put validation in the model itself
+- **Test validators independently** — they're just classes, easy to unit test
+- **Use meaningful error messages** — include property names and constraints
+- **Keep validators simple** — extract complex logic into private methods or custom validators
+- **Use `.CascadeMode`** — stop on first error to avoid confusing multiple error messages
+
+### Don't
+- **Heavy I/O in validators** — database calls on every validation slow down the API
+- **Duplicate validation logic** — extract shared rules into custom validators or extension methods
+- **Validate in multiple places** — pick one layer (usually the API boundary) for validation
+- **Ignore validation in tests** — test both valid and invalid inputs for every validator
 
 ---
 
-*FluentValidation transforms validation from simple attribute checking into a powerful, flexible validation framework. Start with basic rules, then gradually add more complex logic as your application grows.*
+*FluentValidation transforms validation from scattered attribute checking into a centralized, testable, and expressive validation system. Its fluent API makes complex business rules readable while maintaining clean separation from your data models.*

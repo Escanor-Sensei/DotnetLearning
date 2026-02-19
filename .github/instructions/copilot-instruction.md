@@ -147,3 +147,6 @@ applyTo: '**'
   - **Multiple File Edits**: After making multiple string replacements in a file, always run `dotnet build` to catch syntax corruption early before proceeding with test execution.
   - **Mock Setup Types**: Ensure mock setup return types exactly match the interface method signatures - use `Returns(Task.FromResult(value))` for complex async scenarios.
   - **Expression Tree Errors**: For methods with optional parameters, always provide explicit parameter values in mock expressions to avoid expression tree compilation errors.
+
+
+  ## I want notes with less implementation & more theory (high level implementation)
